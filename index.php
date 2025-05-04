@@ -1,0 +1,158 @@
+<?php
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
+include('dbintegration.php');
+
+$host = "localhost";
+$username = "root";
+$password = "";
+$database = "autobahn";
+
+$db = new DBconect($host, $username, $password, $database);
+$conexao = $db->getConnection();
+
+$tabela = $_GET['tabela'] ?? 'tbcliente';
+
+// Obter estrutura da tabela
+$campos = [];
+$result = $conexao->query("DESCRIBE $tabela");
+while ($row = $result->fetch_assoc()) {
+    $campos[] = $row;
+}
+
+// Descobrir chave primária e se é auto_increment
+$chave_primaria = '';
+$pk_auto_increment = false;
+
+$res_pk = $conexao->query("SHOW KEYS FROM $tabela WHERE Key_name = 'PRIMARY'");
+if ($res_pk && $row_pk = $res_pk->fetch_assoc()) {
+    $chave_primaria = $row_pk['Column_name'];
+
+    $res_col = $conexao->query("SHOW COLUMNS FROM $tabela WHERE Field = '$chave_primaria'");
+    if ($res_col && $colinfo = $res_col->fetch_assoc()) {
+        if (strpos($colinfo['Extra'], 'auto_increment') !== false) {
+            $pk_auto_increment = true;
+        }
+    }
+}
+
+// Carregar registros existentes
+$dados = [];
+$result2 = $conexao->query("SELECT * FROM $tabela");
+while ($row2 = $result2->fetch_assoc()) {
+    $dados[] = $row2;
+}
+
+// Nomes amigáveis
+$nometb = [
+    "tbcliente" => "Cliente",
+    "tblocacao" => "Locação",
+    "tbmarca" => "Marca",
+    "tbveiculo" => "Veículo"
+];
+$nomeTabela = $nometb[$tabela] ?? 'Desconhecida';
+
+// Detectar FKs
+$fks = [];
+$sql_fk = "
+    SELECT COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
+    FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+    WHERE TABLE_SCHEMA = '$database' AND TABLE_NAME = '$tabela' AND REFERENCED_TABLE_NAME IS NOT NULL
+";
+$res_fk = $conexao->query($sql_fk);
+while ($row = $res_fk->fetch_assoc()) {
+    $fks[$row['COLUMN_NAME']] = [
+        'tabela_ref' => $row['REFERENCED_TABLE_NAME'],
+        'coluna_ref' => $row['REFERENCED_COLUMN_NAME']
+    ];
+}
+?>
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Autolocadora - <?= htmlspecialchars($nomeTabela) ?></title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <nav>
+        <a href="?tabela=tbcliente">Clientes</a>
+        <a href="?tabela=tbveiculo">Veículos</a>
+        <a href="?tabela=tbmarca">Marcas</a>
+        <a href="?tabela=tblocacao">Locações</a>
+    </nav>
+
+    <h1>Gerenciar <?= htmlspecialchars($nomeTabela) ?></h1>
+
+    <h2>Inserir Novo Registro</h2>
+    <form method="post" action="crud.php">
+        <input type="hidden" name="tabela" value="<?= htmlspecialchars($tabela) ?>">
+        <input type="hidden" name="acao" value="inserir">
+
+        <?php foreach ($campos as $campo):
+            $nomeCampo = $campo['Field'];
+            if ($pk_auto_increment && $nomeCampo == $chave_primaria) continue;
+        ?>
+            <label><?= htmlspecialchars($nomeCampo) ?>:</label>
+
+            <?php if (isset($fks[$nomeCampo])):
+                $tabela_ref = $fks[$nomeCampo]['tabela_ref'];
+                $coluna_ref = $fks[$nomeCampo]['coluna_ref'];
+
+                $res_col = $conexao->query("SHOW COLUMNS FROM $tabela_ref");
+                $cols_ref = [];
+                while ($col = $res_col->fetch_assoc()) {
+                    $cols_ref[] = $col['Field'];
+                }
+                $label_ref = $cols_ref[1] ?? $coluna_ref;
+
+                $res_op = $conexao->query("SELECT `$coluna_ref`, `$label_ref` FROM `$tabela_ref`");
+            ?>
+                <select name="<?= htmlspecialchars($nomeCampo) ?>">
+                    <option value="">Selecione</option>
+                    <?php while ($opt = $res_op->fetch_assoc()): ?>
+                        <option value="<?= htmlspecialchars($opt[$coluna_ref]) ?>">
+                            <?= htmlspecialchars($opt[$label_ref]) ?>
+                        </option>
+                    <?php endwhile; ?>
+                </select><br>
+            <?php else: ?>
+                <input type="text" name="<?= htmlspecialchars($nomeCampo) ?>"><br>
+            <?php endif; ?>
+        <?php endforeach; ?>
+        <button type="submit">Inserir</button>
+    </form>
+
+    <h2>Registros Cadastrados</h2>
+    <table>
+        <tr>
+            <?php foreach ($campos as $campo): ?>
+                <th><?= htmlspecialchars($campo['Field']) ?></th>
+            <?php endforeach; ?>
+            <th>Ações</th>
+        </tr>
+        <?php foreach ($dados as $linha): ?>
+            <tr>
+                <?php foreach ($campos as $campo): ?>
+                    <td><?= htmlspecialchars($linha[$campo['Field']]) ?></td>
+                <?php endforeach; ?>
+                <td>
+                    <form method="post" action="crud.php" style="display:inline;">
+                        <input type="hidden" name="tabela" value="<?= htmlspecialchars($tabela) ?>">
+                        <input type="hidden" name="acao" value="deletar">
+                        <input type="hidden" name="id" value="<?= htmlspecialchars($linha[$chave_primaria]) ?>">
+                        <button type="submit" onclick="return confirm('Confirmar exclusão?')">Deletar</button>
+                    </form>
+                </td>
+            </tr>
+        <?php endforeach; ?>
+    </table>
+</body>
+</html>
+
+<?php
+$db->closeConnection();
+?>

@@ -1,0 +1,122 @@
+/* Estilo Agressivo e Sofisticado */
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #0f0f0f;
+    color: #e0e0e0;
+    margin: 0;
+    padding: 20px;
+}
+
+h1, h2 {
+    color: #ff5555;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-bottom: 2px solid #ff5555;
+    padding-bottom: 5px;
+    margin-bottom: 15px;
+}
+
+nav {
+    background-color: #1a1a1a;
+    padding: 15px;
+    margin-bottom: 30px;
+    border-left: 5px solid #ff5555;
+    box-shadow: 0 0 10px #ff5555;
+}
+
+nav a {
+    color: #ffffff;
+    text-decoration: none;
+    font-weight: 600;
+    margin-right: 25px;
+    padding: 5px 10px;
+    border-radius: 5px;
+    transition: background 0.3s ease, color 0.3s ease;
+}
+
+nav a:hover {
+    background-color: #ff5555;
+    color: #000;
+}
+
+form {
+    background: #1b1b1b;
+    padding: 20px;
+    border: 1px solid #333;
+    border-radius: 8px;
+    box-shadow: 0 0 15px #222;
+    margin-bottom: 30px;
+}
+
+label {
+    display: block;
+    margin-top: 15px;
+    color: #bbbbbb;
+    font-size: 1rem;
+}
+
+input[type="text"], select {
+    background: #141414;
+    color: #f0f0f0;
+    border: 1px solid #444;
+    padding: 10px;
+    width: 100%;
+    border-radius: 5px;
+    margin-top: 5px;
+    transition: border 0.2s;
+}
+
+input[type="text"]:focus, select:focus {
+    border-color: #ff5555;
+    outline: none;
+}
+
+button {
+    margin-top: 20px;
+    background-color: #ff5555;
+    color: #fff;
+    font-weight: bold;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.3s ease-in-out;
+}
+
+button:hover {
+    background-color: #cc4444;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+    background-color: #1a1a1a;
+    box-shadow: 0 0 10px #111;
+}
+
+th, td {
+    border: 1px solid #2a2a2a;
+    padding: 12px 10px;
+    text-align: left;
+}
+
+th {
+    background-color: #2e2e2e;
+    color: #ffffff;
+    text-transform: uppercase;
+    font-size: 0.9rem;
+}
+
+td {
+    color: #dddddd;
+    font-size: 0.95rem;
+}
+
+tr:nth-child(even) {
+    background-color: #161616;
+}
+
+tr:hover {
+    background-color: #292929;
+}
