@@ -1,44 +1,39 @@
 <?php
-// Incluindo a classe de conexão
-include('dbintegration.php');
+require_once("model.php");
 
-// Criando a instância da classe DBconect
-$db = new DBconect("localhost", "root", "", "autobahn");
-$conexao = $db->getConnection(); // Obtém a conexão através do método
+if ($_SERVER["REQUEST_METHOD"] === "POST") {
+    $acao = $_POST["acao"];
+    $tabela = $_POST["tabela"];
+    $chave_primaria = $_POST["chave_primaria"]; // Ex: "id_cliente", "id_veiculo"
 
-// Pega dados
-$tabela = $_POST['tabela'];
-$acao = $_POST['acao'];
+    $model = new Model($tabela, $chave_primaria);
 
-// Descobrir estrutura para pegar chave primária
-$campos = [];
-$result = $conexao->query("DESCRIBE $tabela");
-while ($row = $result->fetch_assoc()) {
-    $campos[] = $row;
+    if ($acao === "inserir") {
+        $dados = $_POST;
+        unset($dados["acao"], $dados["tabela"], $dados["chave_primaria"]);
+        $model->inserir($dados);
+
+    } elseif ($acao === "editar") {
+        $id = $_POST[$chave_primaria];
+        $dados = $_POST;
+        unset($dados["acao"], $dados["tabela"], $dados["chave_primaria"], $dados[$chave_primaria]);
+        $model->editar($id, $dados);
+
+    } elseif ($acao === "deletar") {
+        $id = $_POST[$chave_primaria];
+        $model->deletar($id);
+
+    } elseif ($acao === "ler") {
+        $condicoes = isset($_POST["condicoes"]) ? $_POST["condicoes"] : "";
+        $resultado = $model->ler($condicoes);
+        echo json_encode($resultado);
+
+    } elseif ($acao === "disponibilidade") {
+        $id_veiculo = $_POST["id_veiculo"];
+        $data_inicio = $_POST["data_inicio"];
+        $data_fim = $_POST["data_fim"];
+        $disponivel = $model->veiculoDisponivel($id_veiculo, $data_inicio, $data_fim);
+        echo json_encode(["disponivel" => $disponivel]);
+    }
 }
-$chave_primaria = $campos[0]['Field'];
-
-if ($acao === 'inserir') {
-    $dados = $_POST;
-    unset($dados['acao'], $dados['tabela']);
-    
-    $colunas = implode(",", array_keys($dados));
-    $valores = "'" . implode("','", array_map([$conexao, 'real_escape_string'], array_values($dados))) . "'";
-
-    $sql = "INSERT INTO $tabela ($colunas) VALUES ($valores)";
-    $conexao->query($sql);
-
-} elseif ($acao === 'deletar') {
-    $id = $conexao->real_escape_string($_POST['id']);
-    
-    $sql = "DELETE FROM $tabela WHERE $chave_primaria = '$id'";
-    $conexao->query($sql);
-}
-
-// Fechar a conexão com o banco ao final
-$db->closeConnection();
-
-// Voltar para a index
-header("Location: index.php?tabela=$tabela");
-exit;
 ?>
