@@ -1,59 +1,126 @@
 <?php
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
+session_start();
 
+// --- Configurações de sessão ---
+$duracao_inatividade = 300; // 5 minutos
 
+if (isset($_SESSION['ULTIMA_ATIVIDADE']) && (time() - $_SESSION['ULTIMA_ATIVIDADE']) > $duracao_inatividade) {
+    session_unset();
+    session_destroy();
+    header("Location: login.html");
+    exit;
+}
+
+if (!isset($_SESSION['logado'])) {
+    header("Location: login.html");
+    exit;
+}
+
+$_SESSION['ULTIMA_ATIVIDADE'] = time();
+
+// --- Configurações do banco ---
 include('dbintegration.php');
-
 $host = "localhost";
 $username = "root";
 $password = "";
-$database = "autobahn";
+$database = "para entregar";
 
 $db = new DBconect($host, $username, $password, $database);
 $conexao = $db->getConnection();
 
+// --- Validação da tabela ---
+$tabelasValidas = ['tbcliente', 'tbveiculo', 'tbmarca', 'tblocacao'];
 $tabela = $_GET['tabela'] ?? 'tbcliente';
 
-// Obter estrutura da tabela
+if (!in_array($tabela, $tabelasValidas)) {
+    die("Tabela inválida.");
+}
+
+// --- Obter estrutura da tabela ---
 $campos = [];
-$result = $conexao->query("DESCRIBE $tabela");
+$sql_describe = "DESCRIBE `$tabela`";
+if (!$result = $conexao->query($sql_describe)) {
+    die("Erro ao descrever a tabela '$tabela': " . $conexao->error);
+}
 while ($row = $result->fetch_assoc()) {
     $campos[] = $row;
 }
 
-// Chave primária e auto_increment
+// --- Identificar chave primária e auto_increment ---
 $chave_primaria = '';
 $pk_auto_increment = false;
 
-$res_pk = $conexao->query("SHOW KEYS FROM $tabela WHERE Key_name = 'PRIMARY'");
-if ($res_pk && $row_pk = $res_pk->fetch_assoc()) {
+$sql_pk = "SHOW KEYS FROM `$tabela` WHERE Key_name = 'PRIMARY'";
+if (!$res_pk = $conexao->query($sql_pk)) {
+    die("Erro ao buscar chave primária: " . $conexao->error);
+}
+if ($row_pk = $res_pk->fetch_assoc()) {
     $chave_primaria = $row_pk['Column_name'];
 
-    $res_col = $conexao->query("SHOW COLUMNS FROM $tabela WHERE Field = '$chave_primaria'");
-    if ($res_col && $colinfo = $res_col->fetch_assoc()) {
+    $sql_col = "SHOW COLUMNS FROM `$tabela` WHERE Field = '$chave_primaria'";
+    if (!$res_col = $conexao->query($sql_col)) {
+        die("Erro ao verificar se é auto_increment: " . $conexao->error);
+    }
+    if ($colinfo = $res_col->fetch_assoc()) {
         if (strpos($colinfo['Extra'], 'auto_increment') !== false) {
             $pk_auto_increment = true;
         }
     }
+} else {
+    die("Chave primária não encontrada para a tabela '$tabela'.");
 }
 
-// Dados existentes
+// --- Receber dados da busca ---
+$search = trim($_GET['search'] ?? '');
+$camposFiltro = $_GET['camposFiltro'] ?? []; // array dos campos selecionados no filtro
+
+// Validar camposFiltro para garantir que são campos válidos
+$camposFiltro = array_filter($camposFiltro, function($c) use ($campos) {
+    foreach ($campos as $campo) {
+        if ($campo['Field'] === $c) return true;
+    }
+    return false;
+});
+
+// --- Montar cláusula WHERE para filtro ---
+$where = '';
+if ($search !== '' && count($camposFiltro) > 0) {
+    $search_esc = $conexao->real_escape_string($search);
+    $conds = [];
+    foreach ($camposFiltro as $field) {
+        $conds[] = "`$field` LIKE '%$search_esc%'";
+    }
+    $where = " WHERE " . implode(" OR ", $conds);
+} elseif ($search !== '') {
+    $search_esc = $conexao->real_escape_string($search);
+    $conds = [];
+    foreach ($campos as $campo) {
+        $field = $campo['Field'];
+        $conds[] = "`$field` LIKE '%$search_esc%'";
+    }
+    $where = " WHERE " . implode(" OR ", $conds);
+}
+
+// --- Buscar dados para exibir ---
 $dados = [];
-$result2 = $conexao->query("SELECT * FROM $tabela");
+$sql_dados = "SELECT * FROM `$tabela` $where";
+if (!$result2 = $conexao->query($sql_dados)) {
+    die("Erro ao buscar dados da tabela '$tabela': " . $conexao->error);
+}
 while ($row2 = $result2->fetch_assoc()) {
     $dados[] = $row2;
 }
 
-// FK
+// --- Buscar chaves estrangeiras ---
 $fks = [];
 $sql_fk = "
     SELECT COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
     FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
     WHERE TABLE_SCHEMA = '$database' AND TABLE_NAME = '$tabela' AND REFERENCED_TABLE_NAME IS NOT NULL
 ";
-$res_fk = $conexao->query($sql_fk);
+if (!$res_fk = $conexao->query($sql_fk)) {
+    die("Erro ao buscar chaves estrangeiras: " . $conexao->error);
+}
 while ($row = $res_fk->fetch_assoc()) {
     $fks[$row['COLUMN_NAME']] = [
         'tabela_ref' => $row['REFERENCED_TABLE_NAME'],
@@ -61,18 +128,20 @@ while ($row = $res_fk->fetch_assoc()) {
     ];
 }
 
-// Modo edição
+// --- Lógica de edição ---
 $modoEdicao = ($_GET['acao'] ?? '') === 'editar';
 $idEdicao = $_GET['id'] ?? null;
 $registroEdicao = [];
 
 if ($modoEdicao && $idEdicao) {
     $idEdicaoEscapado = $conexao->real_escape_string($idEdicao);
-    $res = $conexao->query("SELECT * FROM $tabela WHERE $chave_primaria = '$idEdicaoEscapado'");
+    $sql_edicao = "SELECT * FROM `$tabela` WHERE `$chave_primaria` = '$idEdicaoEscapado'";
+    if (!$res = $conexao->query($sql_edicao)) {
+        die("Erro ao buscar registro para edição: " . $conexao->error);
+    }
     $registroEdicao = $res->fetch_assoc() ?? [];
 }
 
-// Nome amigável
 $nometb = [
     "tbcliente" => "Cliente",
     "tblocacao" => "Locação",
@@ -81,7 +150,6 @@ $nometb = [
 ];
 $nomeTabela = $nometb[$tabela] ?? 'Desconhecida';
 ?>
-
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -90,101 +158,154 @@ $nomeTabela = $nometb[$tabela] ?? 'Desconhecida';
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-    <nav>
-        <a href="?tabela=tbcliente">Clientes</a>
-        <a href="?tabela=tbveiculo">Veículos</a>
-        <a href="?tabela=tbmarca">Marcas</a>
-        <a href="?tabela=tblocacao">Locações</a>
-    </nav>
+<nav>
+    <a href="?tabela=tbcliente">Clientes</a>
+    <a href="?tabela=tbveiculo">Veículos</a>
+    <a href="?tabela=tbmarca">Marcas</a>
+    <a href="?tabela=tblocacao">Locações</a>
+    <span style="float:right;">
+        Usuário: <?= htmlspecialchars($_SESSION['nome'] ?? 'Desconhecido'); ?> | <a href="logout.php">Sair</a>
+    </span>
+</nav>
 
-    <h1>Gerenciar <?= htmlspecialchars($nomeTabela) ?></h1>
+<h1>Gerenciar <?= htmlspecialchars($nomeTabela) ?></h1>
 
-    <h2><?= $modoEdicao ? 'Editar Registro' : 'Inserir Novo Registro' ?></h2>
-    <form method="post" action="crud.php">
-        <input type="hidden" name="tabela" value="<?= htmlspecialchars($tabela) ?>">
-        <input type="hidden" name="acao" value="<?= $modoEdicao ? 'editar' : 'inserir' ?>">
-        <?php if ($modoEdicao): ?>
-            <input type="hidden" name="<?= htmlspecialchars($chave_primaria) ?>" value="<?= htmlspecialchars($registroEdicao[$chave_primaria]) ?>">
-        <?php endif; ?>
+<!-- Filtro de busca -->
+<form method="get" action="index.php" style="margin-bottom:1em;">
+    <input type="hidden" name="tabela" value="<?= htmlspecialchars($tabela) ?>">
+    <div style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.5em;">
+        <input type="text" name="search" placeholder="Buscar..." value="<?= htmlspecialchars($search) ?>" style="width:300px;">
 
-        <?php foreach ($campos as $campo):
-            $nomeCampo = $campo['Field'];
-            if ($pk_auto_increment && $nomeCampo == $chave_primaria && !$modoEdicao) continue;
-
-            $valorCampo = $registroEdicao[$nomeCampo] ?? '';
+        <button type="button" id="toggleFiltro" 
+                style="cursor:pointer; font-weight:bold; font-size:1.2em; user-select:none;"
+                aria-expanded="false" aria-controls="filtroColunas" title="Mostrar/Esconder filtro por colunas">
+            ▼
+        </button>
+    </div>
+    
+    <div id="filtroColunas" style="display:none; margin-bottom:0.5em;">
+        <small>Filtrar por colunas:</small><br>
+        <?php foreach ($campos as $campo): 
+            $field = $campo['Field'];
+            $checked = in_array($field, $camposFiltro) ? 'checked' : '';
         ?>
-            <label><?= htmlspecialchars($nomeCampo) ?>:</label>
-
-            <?php if (isset($fks[$nomeCampo])):
-                $tabela_ref = $fks[$nomeCampo]['tabela_ref'];
-                $coluna_ref = $fks[$nomeCampo]['coluna_ref'];
-
-                $res_col = $conexao->query("SHOW COLUMNS FROM $tabela_ref");
-                $cols_ref = [];
-                while ($col = $res_col->fetch_assoc()) {
-                    $cols_ref[] = $col['Field'];
-                }
-                $label_ref = $cols_ref[1] ?? $coluna_ref;
-
-                $res_op = $conexao->query("SELECT `$coluna_ref`, `$label_ref` FROM `$tabela_ref`");
-            ?>
-                <select name="<?= htmlspecialchars($nomeCampo) ?>">
-                    <option value="">Selecione</option>
-                    <?php while ($opt = $res_op->fetch_assoc()): ?>
-                        <option value="<?= htmlspecialchars($opt[$coluna_ref]) ?>"
-                            <?= $opt[$coluna_ref] == $valorCampo ? 'selected' : '' ?>>
-                            <?= htmlspecialchars($opt[$label_ref]) ?>
-                        </option>
-                    <?php endwhile; ?>
-                </select><br>
-            <?php else: ?>
-                <input type="text" name="<?= htmlspecialchars($nomeCampo) ?>" value="<?= htmlspecialchars($valorCampo) ?>"><br>
-            <?php endif; ?>
+            <label style="margin-right:10px;">
+                <input type="checkbox" name="camposFiltro[]" value="<?= htmlspecialchars($field) ?>" <?= $checked ?>>
+                <?= htmlspecialchars($field) ?>
+            </label>
         <?php endforeach; ?>
-        <button type="submit"><?= $modoEdicao ? 'Salvar Alterações' : 'Inserir' ?></button>
-        <?php if ($modoEdicao): ?>
-            <a href="index.php?tabela=<?= htmlspecialchars($tabela) ?>">Cancelar</a>
-        <?php endif; ?>
-    </form>
+    </div>
+    
+    <button type="submit">Buscar</button>
+    <?php if ($search !== ''): ?>
+        <a href="index.php?tabela=<?= htmlspecialchars($tabela) ?>" style="margin-left:1em;">Limpar</a>
+    <?php endif; ?>
+</form>
 
-    <h2>Registros Cadastrados</h2>
-    <table>
+<h2><?= $modoEdicao ? 'Editar Registro' : 'Inserir Novo Registro' ?></h2>
+<form method="post" action="crud.php">
+    <input type="hidden" name="tabela" value="<?= htmlspecialchars($tabela) ?>">
+    <input type="hidden" name="acao" value="<?= $modoEdicao ? 'editar' : 'inserir' ?>">
+    <?php if ($modoEdicao): ?>
+        <input type="hidden" name="<?= htmlspecialchars($chave_primaria) ?>" value="<?= htmlspecialchars($registroEdicao[$chave_primaria]) ?>">
+    <?php endif; ?>
+
+    <?php foreach ($campos as $campo):
+        $nomeCampo = $campo['Field'];
+        if ($pk_auto_increment && $nomeCampo == $chave_primaria && !$modoEdicao) continue;
+
+        $valorCampo = $registroEdicao[$nomeCampo] ?? '';
+    ?>
+        <label><?= htmlspecialchars($nomeCampo) ?>:</label>
+
+        <?php if (isset($fks[$nomeCampo])):
+            $tabela_ref = $fks[$nomeCampo]['tabela_ref'];
+            $coluna_ref = $fks[$nomeCampo]['coluna_ref'];
+
+            if (!in_array($tabela_ref, $tabelasValidas)) {
+                die("Tabela referenciada inválida: $tabela_ref");
+            }
+
+            $sql_col_ref = "SHOW COLUMNS FROM `$tabela_ref`";
+            if (!$res_col = $conexao->query($sql_col_ref)) {
+                die("Erro ao buscar colunas de $tabela_ref: " . $conexao->error);
+            }
+
+            $cols_ref = [];
+            while ($col = $res_col->fetch_assoc()) {
+                $cols_ref[] = $col['Field'];
+            }
+
+            $label_ref = $cols_ref[1] ?? $coluna_ref;
+
+            $sql_op = "SELECT `$coluna_ref`, `$label_ref` FROM `$tabela_ref`";
+            if (!$res_op = $conexao->query($sql_op)) {
+                die("Erro ao buscar dados de $tabela_ref: " . $conexao->error);
+            }
+        ?>
+            <select name="<?= htmlspecialchars($nomeCampo) ?>">
+                <option value="">Selecione</option>
+                <?php while ($opt = $res_op->fetch_assoc()): ?>
+                    <option value="<?= htmlspecialchars($opt[$coluna_ref]) ?>"
+                        <?= $opt[$coluna_ref] == $valorCampo ? 'selected' : '' ?>>
+                        <?= htmlspecialchars($opt[$label_ref]) ?>
+                    </option>
+                <?php endwhile; ?>
+            </select><br>
+        <?php else: ?>
+            <input type="text" name="<?= htmlspecialchars($nomeCampo) ?>" value="<?= htmlspecialchars($valorCampo) ?>"><br>
+        <?php endif; ?>
+    <?php endforeach; ?>
+
+    <button type="submit"><?= $modoEdicao ? 'Salvar Alterações' : 'Inserir' ?></button>
+    <?php if ($modoEdicao): ?>
+        <a href="index.php?tabela=<?= htmlspecialchars($tabela) ?>">Cancelar</a>
+    <?php endif; ?>
+</form>
+
+<h2>Registros Cadastrados</h2>
+<table border="1" cellpadding="5" cellspacing="0">
+    <thead>
+    <tr>
+        <?php foreach ($campos as $campo): ?>
+            <th><?= htmlspecialchars($campo['Field']) ?></th>
+        <?php endforeach; ?>
+        <th>Ações</th>
+    </tr>
+    </thead>
+    <tbody>
+    <?php foreach ($dados as $linha): ?>
         <tr>
             <?php foreach ($campos as $campo): ?>
-                <th><?= htmlspecialchars($campo['Field']) ?></th>
+                <td><?= htmlspecialchars($linha[$campo['Field']]) ?></td>
             <?php endforeach; ?>
-            <th>Ações</th>
+            <td>
+                <form method="post" action="crud.php" style="display:inline;">
+                    <input type="hidden" name="tabela" value="<?= htmlspecialchars($tabela) ?>">
+                    <input type="hidden" name="acao" value="deletar">
+                    <input type="hidden" name="id" value="<?= htmlspecialchars($linha[$chave_primaria]) ?>">
+                    <button type="submit" onclick="return confirm('Confirmar exclusão?')">Deletar</button>
+                </form>
+                <form method="get" action="index.php" style="display:inline;">
+                    <input type="hidden" name="tabela" value="<?= htmlspecialchars($tabela) ?>">
+                    <input type="hidden" name="acao" value="editar">
+                    <input type="hidden" name="id" value="<?= htmlspecialchars($linha[$chave_primaria]) ?>">
+                    <button type="submit">Editar</button>
+                </form>
+            </td>
         </tr>
-        <?php foreach ($dados as $linha): ?>
-            <tr>
-                
-                <?php foreach ($campos as $campo): ?>
-                    <td><?= htmlspecialchars($linha[$campo['Field']]) ?></td>
-
-                <?php endforeach; ?>
-                  
-
-                <td>
-
-                    <form method="post" action="crud.php" style="display:inline;">
-                        <input type="hidden" name="tabela" value="<?= htmlspecialchars($tabela) ?>">
-                        <input type="hidden" name="acao" value="deletar">
-                        <input type="hidden" name="id" value="<?= htmlspecialchars($linha[$chave_primaria]) ?>">
-                        <button type="submit" onclick="return confirm('Confirmar exclusão?')">Deletar</button>
-                    </form>
-                    <form method="get" action="index.php" style="display:inline;">
-                        <input type="hidden" name="tabela" value="<?= htmlspecialchars($tabela) ?>">
-                        <input type="hidden" name="acao" value="editar">
-                        <input type="hidden" name="id" value="<?= htmlspecialchars($linha[$chave_primaria]) ?>">
-                        <button type="submit">Editar</button>
-                    </form>
-                </td>
-            </tr>
-        <?php endforeach; ?>
-    </table>
-</body>
-</html>
+    <?php endforeach; ?>
+    </tbody>
+</table>
 
 <?php
 $db->closeConnection();
 ?>
+
+<script src="js/index.js"></script>
+<footer style="position: fixed; bottom: 10px; right: 10px;">
+  <button id="btnContato" style="padding:8px 12px; cursor:pointer;">Relatar Erro / Contato</button>
+</footer>
+</body>
+
+</html>

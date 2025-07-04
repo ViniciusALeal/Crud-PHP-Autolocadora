@@ -37,7 +37,7 @@ class Model {
 }
 
 // Criando a instância da classe DBconect
-$db = new DBconect("localhost", "root", "", "autobahn");
+$db = new DBconect("localhost", "root", "", "auto");
 $conexao = $db->getConnection(); // Obtém a conexão através do método
 
 // Pega dados
@@ -62,6 +62,13 @@ if ($acao === 'verificar_disponibilidade') {
 }
 
 $campos = [];
+$result = $conexao->query("DESCRIBE $tabela");
+if (!$result) {
+    die("Erro na consulta DESCRIBE: " . $conexao->error);
+}
+while ($row = $result->fetch_assoc()) {
+    $campos[] = $row;
+}
 $result = $conexao->query("DESCRIBE $tabela");
 while ($row = $result->fetch_assoc()) {
     $campos[] = $row;
